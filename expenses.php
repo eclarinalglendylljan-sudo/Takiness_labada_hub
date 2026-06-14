@@ -1,17 +1,9 @@
 <?php
-/**
- * expenses.php
- * Takines Labada Hub — Expense Records
- * Owner only — rental, salaries, electricity, gas, supplies
- */
 require_once __DIR__ . '/config.php';
 require_role('owner');
 
-$allowedTypes = ['Rental', 'Salaries', 'Electricity', 'Gas Tank', 'Supplies'];
+$allowedTypes = ['Salaries', 'Electricity', 'Supplies'];
 
-// ------------------------------------------------------------
-// HANDLE FORM SUBMISSIONS (Add / Edit / Delete)
-// ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
     $method = $_POST['_method'] ?? 'POST';
@@ -198,10 +190,8 @@ require __DIR__ . '/includes/header_app.php';
                 <?php else: ?>
                     <?php
                     $typeColors = [
-                        'Rental'      => 'orange',
                         'Salaries'    => 'blue',
                         'Electricity' => 'red',
-                        'Gas Tank'    => 'teal',
                         'Supplies'    => 'green',
                     ];
                     ?>
