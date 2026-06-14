@@ -13,6 +13,13 @@ require_role('staff');
 
 $user = current_user();
 
+// Price per load per service type (₱) — defined globally so PHP & JS share the same table
+$servicePrices = [
+    'Wash + Dry + Fold' => 120,
+    'Wash + Dry'        => 100,
+    'Wash Only'         => 70,
+];
+
 // ------------------------------------------------------------
 // HANDLE MARK-AS-DONE (AJAX POST)
 // Detect CSRF field name dynamically from the token function
@@ -40,15 +47,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark_
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['action'])) {
     verify_csrf();
 
-    $allowedServices = ['Wash + Dry + Fold', 'Wash + Dry', 'Wash Only'];
+    $allowedServices = array_keys($servicePrices);
     $transactionDate = $_POST['transaction_date'] ?? date('Y-m-d');
     $transactionTime = $_POST['transaction_time'] ?? date('H:i');
     $serviceType     = $_POST['service_type'] ?? '';
     $numLoads        = (int)($_POST['num_loads'] ?? 1);
     $fabricSpray     = isset($_POST['fabric_spray']) && $_POST['fabric_spray'] == '1' ? 1 : 0;
-    $amountPaid      = (float)($_POST['amount_paid'] ?? 0);
-    $cashOnHand      = (float)($_POST['cash_on_hand'] ?? 0);
     $customerName    = trim($_POST['customer_name'] ?? '');
+
+    // Auto-compute amount: loads × price per service (fabcon is free, no surcharge)
+    $pricePerLoad    = $servicePrices[$serviceType] ?? 0;
+    $amountPaid      = $numLoads * $pricePerLoad;
+    $cashOnHand      = 0; // no longer collected from staff
 
     $errors = [];
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $transactionDate)) {
@@ -58,10 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['action'])) {
         $errors[] = 'Please select a valid service type.';
     }
     if ($numLoads < 1 || $numLoads > 99) {
-        $errors[] = 'Number of loads must be between 1 and 99.';
-    }
-    if ($amountPaid < 0) {
-        $errors[] = 'Amount paid cannot be negative.';
+        $errors[] = 'Number of loads must be between 1 and 99 (2 digits max).';
     }
     if ($customerName === '') {
         $errors[] = 'Customer name is required.';
@@ -114,6 +121,19 @@ $todaysTransactions = $stmt->fetchAll();
 
 $todayLoadsTotal = array_sum(array_map(fn($t) => (int)$t->num_loads, $todaysTransactions));
 $allTodayCount   = count($todaysTransactions) + count($pendingTransactions);
+
+// ------------------------------------------------------------
+// PREVIOUS LOADS — all records before today (full history)
+// ------------------------------------------------------------
+$stmt = $pdo->prepare("
+    SELECT s.*, u.name AS recorded_by_name
+    FROM sales s
+    LEFT JOIN users u ON u.id = s.recorded_by
+    WHERE s.transaction_date < CURDATE()
+    ORDER BY s.transaction_date DESC, s.transaction_time DESC
+");
+$stmt->execute();
+$previousTransactions = $stmt->fetchAll();
 
 // ------------------------------------------------------------
 // Expose CSRF token + field name to JS so the AJAX call works
@@ -202,7 +222,7 @@ require __DIR__ . '/includes/header_staff.php';
                         <th scope="col">Time In</th>
                         <th scope="col">Service</th>
                         <th scope="col">Loads (7kg)</th>
-                        <th scope="col">Fabric Spray</th>
+                        <th scope="col">Fabcon</th>
                         <th scope="col">Recorded By</th>
                     </tr>
                 </thead>
@@ -263,7 +283,7 @@ require __DIR__ . '/includes/header_staff.php';
                         <th scope="col">Time</th>
                         <th scope="col">Service</th>
                         <th scope="col">Loads (7kg)</th>
-                        <th scope="col">Fabric Spray</th>
+                        <th scope="col">Fabcon</th>
                         <th scope="col">Recorded By</th>
                     </tr>
                 </thead>
@@ -301,6 +321,100 @@ require __DIR__ . '/includes/header_staff.php';
                             <td>
                                 <span class="badge <?= $tx->fabric_spray ? 'badge-teal' : 'badge-gray' ?>">
                                     <?= $tx->fabric_spray ? 'Yes' : 'No' ?>
+                                </span>
+                            </td>
+                            <td><span class="badge badge-gray"><?= h($tx->recorded_by_name ?? 'Unknown') ?></span></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+
+    <!-- =====================================================
+         PREVIOUS LOADS HISTORY
+    ====================================================== -->
+    <div class="card mt-lg" style="margin-top: var(--spacing-lg, 24px);">
+        <div class="card-header">
+            <span class="card-title">Previous Loads History</span>
+            <span style="font-size:12px; color:var(--color-text-muted);">
+                All recorded loads before today
+            </span>
+        </div>
+        <div class="table-container" style="border:none; border-radius:0;">
+            <table class="data-table" aria-label="Previous loads history">
+                <thead>
+                    <tr>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Date &amp; Time</th>
+                        <th scope="col">Service</th>
+                        <th scope="col">Loads (7kg)</th>
+                        <th scope="col">Fabcon</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Recorded By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($previousTransactions)): ?>
+                        <tr>
+                            <td colspan="7" style="text-align:center; padding: var(--spacing-lg); color:var(--color-text-muted);">
+                                No previous load history yet.
+                            </td>
+                        </tr>
+                    <?php else: ?>
+                        <?php
+                        $svcColors = [
+                            'Wash + Dry + Fold' => 'green',
+                            'Wash + Dry'        => 'blue',
+                            'Wash Only'         => 'orange',
+                        ];
+                        $prevDate = null;
+                        foreach ($previousTransactions as $tx):
+                            $color   = $svcColors[$tx->service_type] ?? 'gray';
+                            $txDate  = $tx->transaction_date;
+                        ?>
+                        <?php if ($txDate !== $prevDate): $prevDate = $txDate; ?>
+                        <tr>
+                            <td colspan="7"
+                                style="background:var(--color-bg-muted, #f3f4f6);
+                                       font-size:12px; font-weight:700;
+                                       color:var(--color-text-muted);
+                                       padding: 6px 14px;
+                                       letter-spacing:.04em;
+                                       text-transform:uppercase;">
+                                <?= date('l, F j, Y', strtotime($txDate)) ?>
+                            </td>
+                        </tr>
+                        <?php endif; ?>
+                        <tr>
+                            <td>
+                                <?php if (!empty($tx->customer_name)): ?>
+                                    <strong><?= h($tx->customer_name) ?></strong>
+                                <?php else: ?>
+                                    <span style="color:var(--color-text-muted); font-style:italic;">No name recorded</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="white-space:nowrap;">
+                                <?= date('M j, Y', strtotime($txDate)) ?>
+                                <span style="color:var(--color-text-muted); font-size:12px;">
+                                    <?= date('h:i A', strtotime($tx->transaction_time)) ?>
+                                </span>
+                            </td>
+                            <td><span class="badge badge-<?= $color ?>"><?= h($tx->service_type) ?></span></td>
+                            <td>
+                                <?= (int)$tx->num_loads ?> load<?= $tx->num_loads > 1 ? 's' : '' ?>
+                                <span class="text-muted text-sm">(<?= (int)$tx->num_loads * 7 ?> kg)</span>
+                            </td>
+                            <td>
+                                <span class="badge <?= $tx->fabric_spray ? 'badge-teal' : 'badge-gray' ?>">
+                                    <?= $tx->fabric_spray ? 'Yes' : 'No' ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge <?= ($tx->status ?? 'done') === 'done' ? 'badge-green' : 'badge-orange' ?>">
+                                    <?= ucfirst($tx->status ?? 'done') ?>
                                 </span>
                             </td>
                             <td><span class="badge badge-gray"><?= h($tx->recorded_by_name ?? 'Unknown') ?></span></td>
@@ -354,18 +468,21 @@ require __DIR__ . '/includes/header_staff.php';
                     >
                 </div>
 
-                <!-- Date & Time -->
-                <div class="grid-2">
-                    <div class="form-group">
-                        <label class="form-label" for="tx-date">Transaction Date</label>
-                        <input type="date" id="tx-date" name="transaction_date" class="form-control"
-                               value="<?= date('Y-m-d') ?>" required aria-required="true">
+                <!-- Date & Time — shown read-only, auto-stamped on submit -->
+                <div class="form-group">
+                    <label class="form-label">Date &amp; Time</label>
+                    <div id="tx-datetime-display"
+                         style="background:var(--color-bg-muted, #f3f4f6);
+                                border:1px solid var(--color-border, #e5e7eb);
+                                border-radius:var(--radius-md, 6px);
+                                padding:9px 14px;
+                                font-size:14px;
+                                color:var(--color-text-muted, #6b7280);
+                                font-weight:500;">
+                        —
                     </div>
-                    <div class="form-group">
-                        <label class="form-label" for="tx-time">Time</label>
-                        <input type="time" id="tx-time" name="transaction_time" class="form-control"
-                               value="<?= date('H:i') ?>" required aria-required="true">
-                    </div>
+                    <input type="hidden" id="tx-date" name="transaction_date">
+                    <input type="hidden" id="tx-time" name="transaction_time">
                 </div>
 
                 <!-- Service type -->
@@ -388,47 +505,35 @@ require __DIR__ . '/includes/header_staff.php';
                     <input type="hidden" name="service_type" id="service-type-input" value="Wash + Dry + Fold">
                 </div>
 
-                <!-- Loads / Amount / Cash -->
-                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--spacing-md);">
-                    <div class="form-group">
-                        <label class="form-label" for="tx-loads">No. of Loads</label>
-                        <input type="number" id="tx-loads" name="num_loads" class="form-control"
-                               value="1" min="1" max="99" required aria-required="true" oninput="recalculate()">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" for="tx-amount">Amount Paid (₱)</label>
-                        <input type="number" id="tx-amount" name="amount_paid" class="form-control"
-                               value="0" min="0" step="0.01" required aria-required="true" oninput="recalculate()">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" for="tx-cash">Cash on Hand (₱)</label>
-                        <input type="number" id="tx-cash" name="cash_on_hand" class="form-control"
-                               value="0" min="0" step="0.01" required aria-required="true">
-                    </div>
+                <!-- Loads -->
+                <div class="form-group">
+                    <label class="form-label" for="tx-loads">Number of Loads</label>
+                    <input type="number" id="tx-loads" name="num_loads" class="form-control"
+                           value="1" min="1" max="99" maxlength="2" required aria-required="true" oninput="recalculate()">
                 </div>
+                <!-- Hidden computed fields — filled by JS before submit -->
+                <input type="hidden" id="tx-amount" name="amount_paid" value="0">
 
                 <!-- Fabric spray -->
                 <div class="form-group">
-                    <label class="form-label" for="tx-spray">Fabric Spray Used</label>
+                    <label class="form-label" for="tx-spray">Fabcon</label>
                     <select id="tx-spray" name="fabric_spray" class="form-control">
-                        <option value="0">No — without spray</option>
-                        <option value="1">Yes — with spray</option>
+                        <option value="0">No — without fabcon</option>
+                        <option value="1">Yes — with fabcon</option>
                     </select>
                 </div>
 
-                <!-- Summary bar -->
+                <!-- Summary bar — price only -->
                 <div style="background:var(--color-info-bg); border-radius:var(--radius-md);
-                            padding: 12px var(--spacing-md);
+                            padding: 14px var(--spacing-md);
                             display:flex; justify-content:space-between; align-items:center;
-                            font-size:13px; font-weight:600;">
-                    <span>
-                        Total Weight: <strong id="summary-weight">7 kg</strong>
-                        <span id="summary-loads-text" style="color:var(--color-text-muted);">
-                            (1 load &times; 7 kg)
+                            font-size:13px; font-weight:600; gap:8px;">
+                    <span style="color:var(--color-text-muted); font-weight:500;">Total Price</span>
+                    <span style="color:var(--color-primary); font-size:18px;">
+                        <strong id="summary-amount">₱120.00</strong>
+                        <span id="summary-breakdown" style="font-size:11px; color:var(--color-text-muted); font-weight:400; margin-left:4px;">
+                            (1 × ₱120)
                         </span>
-                    </span>
-                    <span style="color:var(--color-primary);">
-                        Amount: <strong id="summary-amount">₱0.00</strong>
                     </span>
                 </div>
 
@@ -471,13 +576,67 @@ $pageScripts = <<<HTML
 const CSRF_FIELD = {$jsFieldName};
 const CSRF_VALUE = {$jsFieldValue};
 
+// ── Price table (must match server-side price table) ──────────────────────
+const SERVICE_PRICES = {
+    'Wash + Dry + Fold': 120,
+    'Wash + Dry':        100,
+    'Wash Only':         70,
+};
+// Fabcon is a free add-on — no surcharge
+
 // ── Modal ──────────────────────────────────────────────────────────────────
 const modal     = document.getElementById('modal-add-transaction');
 const btnOpen   = document.getElementById('btn-add-transaction');
 const btnClose  = document.getElementById('btn-close-modal');
 const btnCancel = document.getElementById('btn-cancel-modal');
 
-function openModal()  { modal.style.display = 'flex'; document.getElementById('tx-customer').focus(); }
+function getNow() {
+    const now = new Date();
+    const hh  = String(now.getHours()).padStart(2, '0');
+    const mm  = String(now.getMinutes()).padStart(2, '0');
+    return hh + ':' + mm;
+}
+
+function getToday() {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm   = String(now.getMonth() + 1).padStart(2, '0');
+    const dd   = String(now.getDate()).padStart(2, '0');
+    return yyyy + '-' + mm + '-' + dd;
+}
+
+function stampDateTime() {
+    const today = getToday();
+    const now   = getNow();
+    document.getElementById('tx-date').value = today;
+    document.getElementById('tx-time').value = now;
+
+    // Update the visible read-only display
+    const display = document.getElementById('tx-datetime-display');
+    if (display) {
+        const [yyyy, mm, dd] = today.split('-');
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const monthName = months[parseInt(mm, 10) - 1];
+        const [hh, mi]  = now.split(':');
+        const h12 = parseInt(hh, 10) % 12 || 12;
+        const ampm = parseInt(hh, 10) >= 12 ? 'PM' : 'AM';
+        display.textContent = monthName + ' ' + parseInt(dd, 10) + ', ' + yyyy
+                            + ' — ' + h12 + ':' + mi + ' ' + ampm;
+    }
+}
+
+function openModal() {
+    stampDateTime();
+    modal.style.display = 'flex';
+    document.getElementById('tx-customer').focus();
+    recalculate();
+}
+
+// Re-stamp at the exact moment of submission so the time is precise
+document.getElementById('form-add-transaction').addEventListener('submit', function () {
+    stampDateTime();
+});
+
 function closeModal() { modal.style.display = 'none'; }
 
 btnOpen.addEventListener('click', openModal);
@@ -490,19 +649,44 @@ function selectService(btn) {
     document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('service-type-input').value = btn.dataset.value;
+    recalculate();
 }
 
-// ── Summary bar ────────────────────────────────────────────────────────────
+// ── Price recalculation ────────────────────────────────────────────────────
 function recalculate() {
-    const loads  = parseInt(document.getElementById('tx-loads').value) || 0;
-    const amount = parseFloat(document.getElementById('tx-amount').value) || 0;
-    const weight = loads * 7;
-    document.getElementById('summary-weight').textContent = weight + ' kg';
-    document.getElementById('summary-loads-text').textContent =
-        '(' + loads + ' load' + (loads !== 1 ? 's' : '') + ' \u00d7 7 kg)';
+    const loads        = Math.max(1, parseInt(document.getElementById('tx-loads').value) || 1);
+    const service      = document.getElementById('service-type-input').value;
+    const pricePerLoad = SERVICE_PRICES[service] ?? 120;
+    const total        = loads * pricePerLoad;
+
     document.getElementById('summary-amount').textContent =
-        '\u20b1' + amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        '\u20b1' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('summary-breakdown').textContent =
+        '(' + loads + ' \u00d7 \u20b1' + pricePerLoad + ')';
+
+    // Keep hidden field in sync so PHP receives the computed amount
+    document.getElementById('tx-amount').value = total.toFixed(2);
 }
+
+// ── Enforce 2-digit max on loads input ────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function () {
+    const sprayEl = document.getElementById('tx-spray');
+    if (sprayEl) sprayEl.addEventListener('change', recalculate);
+
+    const loadsEl = document.getElementById('tx-loads');
+    if (loadsEl) {
+        loadsEl.addEventListener('input', function () {
+            // Strip anything beyond 2 digits
+            if (this.value.length > 2) this.value = this.value.slice(0, 2);
+            // Clamp to 1–99
+            const v = parseInt(this.value);
+            if (v > 99) this.value = '99';
+            if (v < 1 && this.value !== '') this.value = '1';
+        });
+    }
+
+    recalculate();
+});
 
 // ── Toast helper ───────────────────────────────────────────────────────────
 function showToast(msg) {

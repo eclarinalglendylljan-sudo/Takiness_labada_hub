@@ -135,10 +135,10 @@ function nav_active(string $key, string $active): string
         <!-- Topbar -->
         <header class="topbar" role="banner">
             <div class="topbar-brand">
-                <img src="assets/images/logo.png" alt="Logo" class="topbar-brand-logo" onerror="this.style.display='none'">
+                
                 <div class="topbar-brand-text">
-                    <div class="brand-name"><span>Takines</span> Labada</div>
-                    <div class="brand-sub">Laundry Management</div>
+                    <div class="brand-name">"Fresh clothes,<span>Fresh life"</span> </div>
+                    <div class="brand-sub"></div>
                 </div>
             </div>
 
