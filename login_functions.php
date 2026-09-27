@@ -1,16 +1,17 @@
 <?php
 /**
  * login_functions.php
- *
- * Pure, DB/session/HTTP-independent login-decision helpers extracted
- * from login.php during the SE5 Lab 2 refactor. Included by both
- * login_refractor.php (production usage) and test_login_logic.php
- * (unit-style checks) so the decision logic can be verified without
- * a database, a session, or an HTTP request.
+ * Extracted, pure decision logic from login.php.
+ * No DB, session, or HTML dependencies — safe to unit test directly.
  */
 
 /**
  * Decide the outcome of a login attempt.
+ *
+ * @param object|null $user  The user record already fetched from the DB
+ *                           (must have ->is_active and ->password), or null
+ *                           if no matching username was found.
+ * @param string $password   The plaintext password submitted by the user.
  * @return string One of: 'success', 'inactive', 'invalid'
  */
 function evaluate_login(?object $user, string $password): string
@@ -29,6 +30,9 @@ function evaluate_login(?object $user, string $password): string
 
 /**
  * Map a user role to their home page.
+ *
+ * @param string $role
+ * @return string
  */
 function role_home_page(string $role): string
 {
