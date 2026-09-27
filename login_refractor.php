@@ -1,10 +1,5 @@
 <?php
 /**
- * login.php
- * Takines Labada Hub — Login Screen
- * POST /login.php -> session with user_id + role
- * Generic error message (no username leak)
- *
  * Refactored: login-decision logic extracted into evaluate_login() and
  * role_home_page() so it can be unit tested without a DB/session/HTTP
  * request. See test_login_logic.php. No behavior or markup was changed.
@@ -13,11 +8,6 @@ require_once __DIR__ . '/config.php';
 
 /**
  * Decide the outcome of a login attempt.
- *
- * @param object|null $user  The user record already fetched from the DB
- *                           (must have ->is_active and ->password), or null
- *                           if no matching username was found.
- * @param string $password   The plaintext password submitted by the user.
  * @return string One of: 'success', 'inactive', 'invalid'
  */
 function evaluate_login(?object $user, string $password): string
@@ -36,9 +26,6 @@ function evaluate_login(?object $user, string $password): string
 
 /**
  * Map a user role to their home page.
- *
- * @param string $role
- * @return string
  */
 function role_home_page(string $role): string
 {
