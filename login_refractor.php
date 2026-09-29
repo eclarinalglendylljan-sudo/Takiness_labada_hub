@@ -5,10 +5,8 @@
  * request. See test_login_logic.php. No behavior or markup was changed.
  */
 require_once __DIR__ . '/config.php';
-
 /**
- * Decide the outcome of a login attempt.
- * @return string One of: 'success', 'inactive', 'invalid'
+ * Decide the outcome of a login attempt 'success', 'inactive', 'invalid'
  */
 function evaluate_login(?object $user, string $password): string
 {
@@ -23,7 +21,6 @@ function evaluate_login(?object $user, string $password): string
     }
     return 'invalid';
 }
-
 /**
  * Map a user role to their home page.
  */
