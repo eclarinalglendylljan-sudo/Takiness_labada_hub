@@ -569,6 +569,7 @@ require __DIR__ . '/includes/header_staff.php';
 // Pass CSRF field name & value to JS safely
 $jsFieldName  = json_encode($csrfFieldName);
 $jsFieldValue = json_encode($csrfFieldValue);
+$jsServicePrices = json_encode($servicePrices);
 
 $pageScripts = <<<HTML
 <script>
@@ -576,12 +577,8 @@ $pageScripts = <<<HTML
 const CSRF_FIELD = {$jsFieldName};
 const CSRF_VALUE = {$jsFieldValue};
 
-// ── Price table (must match server-side price table) ──────────────────────
-const SERVICE_PRICES = {
-    'Wash + Dry + Fold': 120,
-    'Wash + Dry':        100,
-    'Wash Only':         70,
-};
+// ── Price table (generated from PHP $servicePrices, the single source of truth) ──
+const SERVICE_PRICES = {$jsServicePrices};
 // Fabcon is a free add-on — no surcharge
 
 // ── Modal ──────────────────────────────────────────────────────────────────
