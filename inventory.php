@@ -77,6 +77,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('inventory.php');
         }
 
+        // Enforce the cap: quantity after restocking must not exceed max_quantity
+        $stmt = $pdo->prepare(
+            'SELECT item_name, quantity, max_quantity FROM inventory WHERE inventory_id = ?'
+        );
+        $stmt->execute([$inventoryId]);
+        $current = $stmt->fetch();
+
+        if (!$current) {
+            flash('error', 'Item not found.');
+            redirect('inventory.php');
+        }
+
+        $newQuantity = (int)$current->quantity + $addQuantity;
+        if ($newQuantity > (int)$current->max_quantity) {
+            flash('error', sprintf(
+                'Cannot restock "%s": %d + %d = %d would exceed the maximum of %d.',
+                $current->item_name,
+                (int)$current->quantity,
+                $addQuantity,
+                $newQuantity,
+                (int)$current->max_quantity
+            ));
+            redirect('inventory.php');
+        }
+
         $stmt = $pdo->prepare(
             'UPDATE inventory SET quantity = quantity + ? WHERE inventory_id = ?'
         );
@@ -114,6 +139,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($errors) {
             flash('error', implode(' ', $errors));
+            redirect('inventory.php');
+        }
+
+        // Enforce the cap: the new maximum must not be lower than the stock on hand
+        $stmt = $pdo->prepare('SELECT quantity FROM inventory WHERE inventory_id = ?');
+        $stmt->execute([$inventoryId]);
+        $current = $stmt->fetch();
+
+        if (!$current) {
+            flash('error', 'Item not found.');
+            redirect('inventory.php');
+        }
+
+        if ($maxQuantity < (int)$current->quantity) {
+            flash('error', sprintf(
+                'Max quantity (%d) cannot be lower than the current quantity (%d).',
+                $maxQuantity,
+                (int)$current->quantity
+            ));
             redirect('inventory.php');
         }
 
