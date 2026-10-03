@@ -18,6 +18,25 @@ function json_response(bool $ok, string $message, array $extra = []): never
 }
 
 // ============================================================
+// HELPER — Find one inventory item, or flash an error and redirect
+// ============================================================
+function find_inventory_item_or_redirect(PDO $pdo, int $inventoryId): object
+{
+    $stmt = $pdo->prepare(
+        'SELECT item_name, quantity, max_quantity FROM inventory WHERE inventory_id = ?'
+    );
+    $stmt->execute([$inventoryId]);
+    $item = $stmt->fetch();
+
+    if (!$item) {
+        flash('error', 'Item not found.');
+        redirect('inventory.php');
+    }
+
+    return $item;
+}
+
+// ============================================================
 // POST ROUTER  ($_POST['_action'] drives every mutation)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -78,19 +97,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Enforce the cap: quantity after restocking must not exceed max_quantity
+        $current = find_inventory_item_or_redirect($pdo, $inventoryId);
+
+        // The UPDATE itself refuses to go over max_quantity, so two
+        // simultaneous restocks cannot both slip past the cap.
         $stmt = $pdo->prepare(
-            'SELECT item_name, quantity, max_quantity FROM inventory WHERE inventory_id = ?'
+            'UPDATE inventory
+             SET quantity = quantity + ?
+             WHERE inventory_id = ? AND quantity + ? <= max_quantity'
         );
-        $stmt->execute([$inventoryId]);
-        $current = $stmt->fetch();
+        $stmt->execute([$addQuantity, $inventoryId, $addQuantity]);
 
-        if (!$current) {
-            flash('error', 'Item not found.');
-            redirect('inventory.php');
-        }
-
-        $newQuantity = (int)$current->quantity + $addQuantity;
-        if ($newQuantity > (int)$current->max_quantity) {
+        if ($stmt->rowCount() === 0) {
+            $newQuantity = (int)$current->quantity + $addQuantity;
             flash('error', sprintf(
                 'Cannot restock "%s": %d + %d = %d would exceed the maximum of %d.',
                 $current->item_name,
@@ -101,11 +120,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ));
             redirect('inventory.php');
         }
-
-        $stmt = $pdo->prepare(
-            'UPDATE inventory SET quantity = quantity + ? WHERE inventory_id = ?'
-        );
-        $stmt->execute([$addQuantity, $inventoryId]);
 
         $stmt = $pdo->prepare('SELECT item_name FROM inventory WHERE inventory_id = ?');
         $stmt->execute([$inventoryId]);
@@ -142,31 +156,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('inventory.php');
         }
 
-        // Enforce the cap: the new maximum must not be lower than the stock on hand
-        $stmt = $pdo->prepare('SELECT quantity FROM inventory WHERE inventory_id = ?');
-        $stmt->execute([$inventoryId]);
-        $current = $stmt->fetch();
-
-        if (!$current) {
-            flash('error', 'Item not found.');
-            redirect('inventory.php');
-        }
-
-        if ($maxQuantity < (int)$current->quantity) {
-            flash('error', sprintf(
-                'Max quantity (%d) cannot be lower than the current quantity (%d).',
-                $maxQuantity,
-                (int)$current->quantity
-            ));
-            redirect('inventory.php');
-        }
-
+        // The UPDATE itself refuses a max_quantity lower than the stock on
+        // hand (AND quantity <= ?), so it cannot slip past the cap.
         $stmt = $pdo->prepare(
             'UPDATE inventory
              SET item_name = ?, unit = ?, icon = ?, max_quantity = ?
-             WHERE inventory_id = ?'
+             WHERE inventory_id = ? AND quantity <= ?'
         );
-        $stmt->execute([$itemName, $unit, $icon, $maxQuantity, $inventoryId]);
+        $stmt->execute([$itemName, $unit, $icon, $maxQuantity, $inventoryId, $maxQuantity]);
+
+        // 0 rows can mean: item missing, cap refused it, or nothing changed.
+        if ($stmt->rowCount() === 0) {
+            $current = find_inventory_item_or_redirect($pdo, $inventoryId);
+
+            if ($maxQuantity < (int)$current->quantity) {
+                flash('error', sprintf(
+                    'Max quantity (%d) cannot be lower than the current quantity (%d).',
+                    $maxQuantity,
+                    (int)$current->quantity
+                ));
+                redirect('inventory.php');
+            }
+        }
 
         flash('success', '"' . $itemName . '" updated.');
         redirect('inventory.php');
