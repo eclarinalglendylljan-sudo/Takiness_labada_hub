@@ -4,3 +4,4 @@ create_users.sql
 *.log
 sql/
 sql - Copy/
+/takiness_labadadb.sql
